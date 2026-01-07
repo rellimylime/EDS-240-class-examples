@@ -47,3 +47,6 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# ignore any folder named `data/` within folders named `week*` (* acts as a wildcard)
+/week*/data/
