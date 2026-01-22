@@ -1,0 +1,259 @@
+---
+title: "TEMPLATE - visualizing amounts / rankings"
+author: "Your Name"
+date: 2026-01-21
+toc: true
+---
+
+::: {.callout-note}
+This template follows the [visualizing amounts / rankings slides](https://eds-240-data-viz.github.io/course-materials/lecture-slides/SLIDES-distributions.html){target="_blank}. Please be sure to cross-reference the slides, which contain important information and additional context!
+:::
+
+## Setup
+
+```{r setup}
+#| eval: false
+#| echo: true
+#| message: false
+#| warning: false
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+##                                    setup                                 ----
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+#..........................load packages.........................
+library(tidyverse)
+library(janitor)
+library(scales)
+
+#..........................import data...........................
+iwa_data <- read_csv(here::here("week3", "data", "combined_iwa-assessment-outputs-conus-2025_CONUS_200910-202009_long.csv"))
+
+#..................create df of subregions names.................
+# data only contain HUC codes; must manually join names if we want to include those in our viz (which we do! we'll mainly be looking at CA subregions)
+# subregions (& others) identified in: https://water.usgs.gov/GIS/wbd_huc8.pdf
+# there may be a downloadable dataset containing HUCs & names out there...but I couldn't find it
+subregion_names <- tribble(
+  ~subregion_HUC, ~subregion_name,
+  "1801", "Klamath-Northern California Coastal",
+  "1802", "Sacramento",
+  "1803", "Tulare-Buena Vista Lakes",
+  "1804", "San Joaquin",
+  "1805", "San Francisco Bay",
+  "1806", "Central California Coastal",
+  "1807", "Southern California Coastal",
+  "1808", "North Lahontan", 
+  "1809", "Northern Mojave-Mono Lake",
+  "1810", "Southern Mojave-Salton Sea",
+)
+
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+##                                wrangle data                              ----
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+#......create df with just CA water resource region (HUC 18).....
+ca_region <- iwa_data |> 
+
+  # make nicer column names ----
+  clean_names() |> 
+
+  # create columns for 2-unit (region-level) & 4-unit (subregion-level) HUC using full 12-unit HUC ----
+  mutate(region_HUC = str_sub(string = huc12_id, start = 1, end = 2),
+         subregion_HUC = str_sub(string = huc12_id, start = 1, end = 4)) |> 
+  
+  # filter for just CA region (HUC 18) ----
+  filter(region_HUC == "18") |> 
+
+  # separate year and month into two columns ----
+  separate_wider_delim(cols = year_month,
+                       delim = "-",
+                       names = c("year", "month")) |> 
+
+  # convert year and month from chr to num ---                            
+  mutate(year = as.numeric(year),
+         month = as.numeric(month)) |> 
+  
+  # join subregion names ----
+  left_join(subregion_names) |> 
+  
+  # keep necessary columns & reorder in more logical way -----
+  select(year, month, huc12_id, region_HUC, subregion_HUC, subregion_name, availab_mm_mo, consum_mm_mo, sui_frac)
+```
+
+## Bar & Lollipop Plots
+
+- bar & lollipop plots are interchangeable
+- the focus is on the highest & lowest values (as well as overall rank / hierarchy)
+- best for visualizing amounts across a single categorical variable 
+- encode values by LENGTH from 0
+
+After building some basic plots, we'll practice: 
+
+- making space for overlapping labels
+- reordering groups
+- adding direct labels
+
+***Our goal:** create bar & lollipop that shows long-term mean Surface Water-Supply and Use Index (SUI) across the ten HUC 18 subregions*
+
+```{r}
+#| eval: true
+#| echo: true
+#| warning: false
+#| message: false
+#| layout-ncol: 2
+
+#............................bar plot............................
+ca_region %>% 
+  group_by(subregion_name) %>% 
+  summarize(mean_sui_2010_2020 = mean(sui_frac, na.rm = TRUE)) %>% 
+  mutate(subregion_name = fct_reorder(.f = subregion_name, .x = mean_sui_2010_2020)) %>% 
+  ggplot(aes(x = mean_sui_2010_2020, y = subregion_name)) +
+  geom_col() +
+  geom_text(aes(label = round(mean_sui_2010_2020, 2)), hjust)
+
+#..........................lollipop plot.........................
+
+```
+
+## Note 1: `geom_col()` vs. `geom_bar()`
+
+- Use `geom_col()` when you want the heights of your bars to represent values in your data
+- Use `geom_bar()` if you want the heights of your bars to be proportional to the number of cases in each group
+
+```{r}
+#| eval: true
+#| echo: true
+#| layout-ncol: 2
+#.......................geom_col() example.......................
+# How does mean SUI compare across subregions?
+ca_region |> 
+  group_by(subregion_name) |> 
+  summarise(mean_sui_2010_2020 = mean(sui_frac, na.rm = TRUE)) |> 
+  ggplot(aes(x = mean_sui_2010_2020, y = subregion_name)) + 
+  geom_col()
+
+#.......................geom_bar() example.......................
+# How many observations (rows) exist for each subregion?
+```
+
+## Stacked Bar Plots
+
+- great for part-to-whole comparisons
+- use a percentage stacked bar chart when you want the focus to be on relative proportions
+- encode values by LENGTH
+
+***Our goal:** create a stacked bar chart that shows how CA subwatersheds (HUC 12s) are distributed across SUI categories*
+
+First we need to do a bit of wrangling:
+
+```{r}
+#| eval: true
+#| echo: true
+#| message: false
+
+#................create df classifying SUI values................
+sui_severity <- ca_region |>
+  mutate(
+    sui_category = case_when(
+      sui_frac < 0.2 ~ "Very low",
+      sui_frac >= 0.2 & sui_frac < 0.4 ~ "Low",
+      sui_frac >= 0.4 & sui_frac < 0.6 ~ "Moderate",
+      sui_frac >= 0.6 & sui_frac < 0.8 ~ "High",
+      sui_frac >= 0.8 & sui_frac <= 1 ~ "Severe",
+      TRUE ~ NA
+    )) |> 
+  group_by(month, sui_category) |> 
+  summarize(tot_num_sui = n()) |> 
+  drop_na(sui_category) |> 
+  mutate(month = month.abb[month],
+         month = factor(month, levels = c(month.abb[10:12], month.abb[1:9]))) # order months Oct > Sep (water year)
+```
+
+Then create a stacked bar plot:
+
+```{r}
+#| eval: true
+#| echo: true
+
+#......................create color palette......................
+# pulled hex codes from USGS map using ColorZilla Chrome extension
+sui_colors <- c("Severe" = "#720C0F", 
+                "High" = "#F68939", 
+                "Moderate" = "#FBF7BF", 
+                "Low" = "#AAD9EA", 
+                "Very low" = "#217AB5")
+
+#......................% stacked bar chart.......................
+
+```
+
+## Heatmaps
+
+- great for visualizing matrices of data (e.g. 2 categorical + 1 numeric)
+- focus is on patterns rather than precise amounts
+- consider audience familiarity (may require more explanation than a basic bar plot)
+- encodes values using COLOR
+
+***Our goal:** create a heatmap that shows how water stress (represented by SUI) changes through time for each of the ten HUC 18 subregions*
+
+First, we need to do a bit of wrangling:
+
+```{r}
+#| eval: true
+#| echo: true
+#| message: false
+#| warning: false
+#............df of annual mean SUI by subregion & year...........
+heatmap_data <- ca_region |> 
+  group_by(subregion_name, year) |> 
+  summarize(annual_mean_sui = mean(sui_frac, na.rm = TRUE))
+
+#.determine order of subregions based on highest avg SUI in 2015.
+
+#........join order with rest of data to set factor levels.......
+
+```
+
+Then, create heatmap:
+
+```{r}
+#| eval: true
+#| echo: false
+#.........................create heatmap.........................
+
+```
+
+::: {.callout-note}
+## Question:
+How else might you consider ordering these groups?
+:::
+
+## Dumbbell Plots
+
+- highlight magnitude and direction of change (or difference) between two values within a category
+- shows exact values, but focus is on the difference between values
+- encode values using POSITION
+
+***Our goal:** create a dumbbell chart to compare mean monthly water availability and consumption in the Santa Barbara Coastal subbasin (HUC8: 18060013) across the years 2010-2020.*
+
+First, we need to do a bit of wrangling:
+
+```{r}
+#| eval: true
+#| echo: true
+#.........df mean water avail vs. consum in HUC 18060013.........
+sbc_subbasin_monthly <- ca_region |> 
+  mutate(subbasin_HUC = str_sub(string = huc12_id, start = 1, end = 8)) |> 
+  filter(subbasin_HUC == "18060013") |> 
+  group_by(month) |> 
+  summarize(mean_avail = mean(availab_mm_mo, na.rm = TRUE),
+            mean_consum = mean(consum_mm_mo, na.rm = TRUE)) |> 
+  mutate(month = month.abb[month],
+          month = factor(month, levels = rev(c(month.abb[10:12], month.abb[1:9]))))
+```
+
+Then, create dumbbell plot: 
+
+```{r}
+#......................create dumbbell plot......................
+
+```

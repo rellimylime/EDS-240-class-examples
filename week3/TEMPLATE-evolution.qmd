@@ -1,0 +1,220 @@
+---
+title: "TEMPLATE - visualizing evolution"
+author: "Your Name"
+date: 2026-01-21
+toc: true
+---
+
+::: {.callout-note}
+This template follows the [visualizing evolution slides](https://eds-240-data-viz.github.io/course-materials/lecture-slides/SLIDES-evolution.html#/title-slide){target="_blank}. Please be sure to cross-reference the slides, which contain important information and additional context!
+:::
+
+## Setup
+
+::: {.callout-note}
+`{tidycensus}` functions (e.g. `get_estimates()`) internally call `Sys.getenv("CENSUS_API_KEY)` to retrieve your key from `.Renviron`. This means you don't need to explicitly call `Sys.getenv("CENSUS_API_KEY)` in your code -- `{tidycensus}` handles that for you!
+:::
+
+```{r}
+#| eval: true
+#| echo: true
+#| message: false
+#| warning: false
+
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+##                                    setup                                 ----
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+#.........................load libraries.........................
+library(tidycensus)
+library(tidyverse)
+library(gghighlight)
+library(scales)
+
+#..........................import data...........................
+lyme <- read_csv(here::here("week3", "data", "2023_CaseIncid-Lyme-Disease-Cases-by-State-or-Locality.csv"))
+
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+##                          wrangle lyme disease data                       ----
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+#....................wrangle lyme disease data...................
+lyme_clean <- lyme |> 
+  
+  rename(state = State) |> 
+  
+  # remove special character from State names that have it ----
+  mutate(state = str_replace(string = state, pattern = "\x86", replacement = "")) |> 
+  
+  # remove total cases row ----
+  filter(state != "U.S. Total") |> 
+  
+  # wide to long (tidy) years ----
+  pivot_longer(cols = 2:17, names_to = "year", values_to = "reported_cases") |> 
+  
+  # reorder columns ----
+  relocate(year, state, reported_cases) |> 
+  
+  # filter for years 2010 - 2020 ----
+  filter(year %in% c(2010:2020))
+  
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+##                          get & wrangle census data                       ----
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+#........get pop estimates by state using tidycensus API.........
+us_state_pop <- get_estimates(geography = "state", 
+                              product = "population",
+                              state = NULL, 
+                              year = 2019) |> # request 2019 vintage for the 2010s (see documentation)
+  filter(variable == "POP") |> 
+  select(state = NAME, population = value) |> 
+  filter(state != "Puerto Rico")
+
+#........................write data to csv.......................
+# OPTIONAL, but recommended in case you want to work offline, the API is down, etc. (you can then read in your saved data file rather than run the above code)
+# write_csv(us_state_pop, file = here::here("week3", "data", "us_state_pop.csv"))  
+
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+##                            join lyme & pop dfs                           ----
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+lyme_pop <- left_join(lyme_clean, us_state_pop) |>  
+  
+  # add col with num of 100k people per state ----
+  mutate(pop100k = population/100000) |> 
+  
+  # calculate num cases per 100k people (common way of reporting disease incidence) ----
+  mutate(cases_per100k = reported_cases/pop100k) 
+```
+
+## Line graphs
+
+- show evolution of one or more numeric variables; similar to scatter plots but points are ordered (typically by x-axis value) and joined with straight line segments
+
+```{r}
+#| eval: true
+#| echo: true
+ #...........................line chart...........................
+```
+
+### Avoid spaghetti plots 
+
+- highlight groups or values of interest to focus attention
+
+```{r}
+#| eval: true
+#| echo: true
+#| warning: false
+#| message: false
+
+#.......................highlight on group.......................
+ggplot(lyme_pop, aes(x = year, y = cases_per100k, group = state)) +
+  geom_line() 
+
+#..................highlight based on criteria...................
+ggplot(lyme_pop, aes(x = year, y = cases_per100k, group = state)) +
+  geom_line() 
+```
+
+### Note 1: ggplot cuts the y-axis if 0 isn’t relevant
+
+- line graphs encode data **by position** and **not length** -- cutting the y-axis is generally considered acceptable
+
+```{r}
+#| eval: true
+#| echo: true
+#| layout-ncol: 2
+
+#..................ggplot cuts y-axis by default.................
+lyme_pop |> 
+  filter(year %in% c(2013:2019)) |> 
+  filter(state == "Vermont") |> 
+  ggplot(aes(x = year, y = cases_per100k, group = state)) +
+  geom_line()
+
+#....................force y-axis origin at 0....................
+lyme_pop |> 
+  filter(year %in% c(2013:2019)) |> 
+  filter(state == "Vermont") |> 
+  ggplot(aes(x = year, y = cases_per100k, group = state)) +
+  geom_line() +
+  scale_y_continuous(limits = c(0, NA))
+```
+
+### Note 2: Consider aspect ratio (height:width ratio)
+
+::: {.callout-tip}
+Temporarily adding tick marks (breaks) can help to visualize changes to your plot's aspect ratio. Always remove breaks when finalizing your plot. 
+:::
+
+```{r}
+#| eval: true
+#| echo: true
+#..........default aspect ratio (with added tick marks)..........
+lyme_pop |> 
+  filter(state == "Vermont") |> 
+  ggplot(aes(x = year, y = cases_per100k, group = state)) +
+  geom_line() 
+```
+
+## Area charts
+
+- similar to line chart; indicates change in a numeric variable through time, but the space between x-axis and line is shaded in
+
+```{r}
+#| eval: true
+#| echo: true
+#...........area chart of lyme disease incidence in NJ...........
+lyme_pop |> 
+  filter(state == "New Jersey") 
+```
+
+### Alternative: stacked area charts 
+
+- show evolution of the whole + relative proportions of each group
+
+```{r}
+#| eval: true
+#| echo: true
+#.......................stacked area chart.......................
+lyme_pop |> 
+  filter(state %in% c("Maine", "Rhode Island", "New Hampshire", "Vermont")) 
+```
+
+### Alternative: proportional stacked area chart
+
+- plot percentage contributions rather than absolute numbers on y-axis
+
+```{r}
+#| eval: true
+#| echo: true
+#................proportional stacked area chart.................
+lyme_pop |> 
+  filter(state %in% c("Maine", "Rhode Island", "New Hampshire", "Vermont")) |> 
+  ggplot(aes(x = year, y = cases_per100k, group = state, fill = state)) +
+  geom_area() 
+```
+
+### Note 1: stacked area charts aren't great for looking at evolution of individual groups
+
+- the stacked area chart and faceted line graph both show the same data
+
+```{r}
+#| eval: true
+#| echo: true
+#| layout-ncol: 2
+#.......................stacked area chart.......................
+lyme_pop |> 
+  filter(state %in% c("Maine", "Rhode Island", "New Hampshire", "Vermont")) |> 
+  ggplot(aes(x = year, y = cases_per100k, group = state, fill = state)) +
+  geom_area()
+
+#........same data, but as a line chart & faceted by state.......
+lyme_pop |> 
+  filter(state %in% c("Maine", "Rhode Island", "New Hampshire", "Vermont")) |> 
+  ggplot(aes(x = year, y = cases_per100k, group = state, color = state)) +
+  geom_line() +
+  facet_wrap(~state)
+```
+

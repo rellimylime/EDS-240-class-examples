@@ -1,0 +1,84 @@
+---
+title: "week1-lab"
+author: Emily Miller
+date: 01/08/26
+format: html
+---
+
+### Import necessary packages
+
+```{r}
+library("tidyverse")
+library("janitor")
+```
+### Load the data
+
+```{r}
+stressor <- read_csv(here::here("week1/data/stressor.csv"))
+```
+### Data Exploration
+```{r}
+# Inspect column names
+print(names(stressor))
+
+# Inspect data types
+print(summary(stressor))
+
+# Inspect head and tail
+print(head(stressor), tail(stessor))
+```
+
+### Clean data
+
+```{r}
+# Remove all special characters in the state and stressor column ovservations
+
+stressor_clean <- stressor %>%
+  # Clean character strings 
+  mutate(state = str_replace_all(state, "[^A-Za-z ]", ""), stressor = str_replace_all(stressor, "[^A-Za-z ]", "")) %>% 
+  # Convert to camel case
+  clean_names() %>% 
+  # Convert year column to numeric
+  mutate(year = as.numeric(year)) %>% 
+  # Pivot data
+  pivot_longer(cols = 4:7, 
+               names_to = "months",
+               values_to = "pct_stress") %>% 
+  # Add a quarter column
+  mutate(quarter = case_when(
+    months == "january_march" ~ "Winter",
+    months == "april_june" ~ "Sping",
+    months == "july_september" ~ "Summer",
+    months == "october_december" ~ "Fall"
+  )) %>% 
+  # Remove rows where the state is “United States” or “Other States”
+  filter(state != "United States", state != "Other States") %>% 
+  # Select stressor and state that interest me
+  filter(state == "Maine", stressor == "Unknown") %>% 
+  # Group by year and quarter
+  group_by(year, quarter)
+
+average_stress <- stressor_clean %>% 
+  # Group by year and quarter
+  group_by(year, quarter) %>% 
+  # Calculate quarterly average
+  summarize(avg_stress = mean(pct_stress, na.rm = TRUE))
+  
+  
+```
+### Data Visualization
+
+```{r}
+library(patchwork)
+
+plt1 <- ggplot(average_stress, aes(factor(year), avg_stress, fill = factor(quarter))) +
+  geom_col(position = "stack") +
+  theme_minimal()
+
+plt2 <- ggplot(average_stress, aes(factor(quarter), avg_stress, fill = factor(year))) +
+  geom_col(position = "stack")
+
+plt1
+```
+
+
